@@ -1,8 +1,20 @@
 {
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", ":disableDependencyDashboard"],
-  "baseBranches": ["dev"],
-  "enabledManagers": ["cargo", "npm", "github-actions"],
+  "baseBranchPatterns": ["dev"],
+  "enabledManagers": [
+    "asdf",
+    "cargo",
+    "custom.regex",
+    "devcontainer",
+    "github-actions",
+    "npm",
+    "rust-toolchain"
+  ],
   "labels": ["dependencies"],
+  "prBodyNotes": [
+    "{{#if isMinor}}<!-- renovate-update\n{{encodeURIComponent datasource}}|{{encodeURIComponent depName}}|{{#if currentVersion}}{{encodeURIComponent currentVersion}}{{else}}{{encodeURIComponent currentValue}}{{/if}}|{{encodeURIComponent newVersion}}|{{updateType}}\n-->{{/if}}"
+  ],
   "ignorePaths": [
     "**/node_modules/**",
     "**/bower_components/**",
@@ -14,6 +26,8 @@
     "shared/**"
   ],
   "rangeStrategy": "replace",
+  "prCreation": "not-pending",
+  "internalChecksFilter": "strict",
   "packageRules": [
     {
       "matchUpdateTypes": ["patch"],
@@ -24,15 +38,10 @@
       "semanticCommitType": "chore"
     },
     {
-      "description": "Disable node/pnpm version updates",
-      "matchPackageNames": ["node", "pnpm"],
-      "matchDepTypes": ["engines", "packageManager"],
-      "enabled": false
-    },
-    {
-      "description": "Group all cargo dependencies into a single PR",
+      "description": "Group all cargo dependencies into a single PR and bump Cargo.toml ranges",
       "matchManagers": ["cargo"],
-      "groupName": "cargo dependencies"
+      "groupName": "cargo dependencies",
+      "rangeStrategy": "bump"
     },
     {
       "description": "Group all npm dependencies into a single PR",
@@ -40,9 +49,143 @@
       "groupName": "npm dependencies"
     },
     {
+      "description": "Update Tauri npm packages and Cargo crates together so frontend and backend stay in sync",
+      "matchPackageNames": ["@tauri-apps/**", "tauri", "tauri-*"],
+      "groupName": "tauri",
+      "addLabels": ["tauri"]
+    },
+    {
       "description": "Group all GitHub Actions updates into a single PR",
       "matchManagers": ["github-actions"],
       "groupName": "github actions"
+    },
+    {
+      "description": "Recompile generated agentic workflows with gh aw compile instead of updating individual action pins",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".github/workflows/*.lock.yml"],
+      "enabled": false
+    },
+    {
+      "description": "Group gh-aw compiler and setup action updates; recompile workflow locks before merging",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["github/gh-aw", "github/gh-aw-actions"],
+      "groupName": "gh-aw",
+      "groupSlug": "gh-aw",
+      "automerge": false
+    },
+    {
+      "description": "Skip TypeScript 7.0 series",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0 || >=7.1.0"
+    },
+    {
+      "description": "Review tsrs bumps alone; the version encodes the pinned TypeScript release",
+      "matchPackageNames": ["tsrs", "/^@tsrs//"],
+      "groupName": "tsrs",
+      "rangeStrategy": "pin",
+      "automerge": false
+    },
+    {
+      "description": "Prevent project from supply chain attack",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "1 days"
+    },
+    {
+      "description": "Group Node.js version updates across workflows, devcontainer, tool-versions, and package.json",
+      "matchPackageNames": [
+        "node",
+        "nodejs",
+        "ghcr.io/devcontainers/features/node"
+      ],
+      "groupName": "Node.js"
+    },
+    {
+      "description": "Group PNPM version updates across package.json, tool-versions, workflows, and devcontainer",
+      "matchPackageNames": ["pnpm"],
+      "groupName": "pnpm"
+    },
+    {
+      "description": "Group Rust toolchain updates across rust-toolchain.toml, workflows, devcontainer, and tool-versions",
+      "matchPackageNames": [
+        "rust",
+        "rust-lang/rust",
+        "ghcr.io/devcontainers/features/rust"
+      ],
+      "groupName": "Rust toolchain"
+    },
+    {
+      "description": "Update the Specta contract toolchain together",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["specta", "tauri-specta", "specta-typescript"],
+      "groupName": "specta",
+      "groupSlug": "specta",
+      "prCreation": "immediate",
+      "automerge": false
+    },
+    {
+      "description": "Keep Specta aligned with the supported tauri-specta release",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["specta", "tauri-specta"],
+      "allowedVersions": "/^2\\.0\\.0-rc\\.26$/"
+    },
+    {
+      "description": "Keep the TypeScript exporter compatible with Specta rc.26",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["specta-typescript"],
+      "allowedVersions": "/^0\\.0\\.13$/"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Node.js in GitHub Workflows",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "node-version:\\s*['\"]?(?<currentValue>\\d+\\.\\d+\\.\\d+)['\"]?"
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Rust toolchain in GitHub Workflows",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "(?:toolchain:\\s*['\"]|--toolchain\\s+|dtolnay/rust-toolchain@)(?<currentValue>\\d+\\.\\d+\\.\\d+)['\"]?"
+      ],
+      "depNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Node.js in devcontainer.json",
+      "fileMatch": ["^\\.devcontainer/devcontainer\\.json$"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/node:[^\"]+\":\\s*\\{[^}]*\"version\":\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Rust in devcontainer.json",
+      "fileMatch": ["^\\.devcontainer/devcontainer\\.json$"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/rust:[^\"]+\":\\s*\\{[^}]*\"version\":\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Update pnpm in devcontainer.json",
+      "fileMatch": ["^\\.devcontainer/devcontainer\\.json$"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/node:[^\"]+\":\\s*\\{[^}]*\"pnpmVersion\":\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "pnpm",
+      "datasourceTemplate": "npm"
     }
   ],
   "postUpdateOptions": ["pnpmDedupe"],
@@ -50,6 +193,7 @@
   "lockFileMaintenance": {
     "enabled": true,
     "description": "Force update lockfile to track latest commits of git dependencies",
-    "schedule": ["before 5am on monday"]
+    "schedule": ["* 0-4 1 * *"],
+    "automerge": true
   }
 }

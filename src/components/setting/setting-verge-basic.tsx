@@ -6,9 +6,10 @@ import { useTranslation } from 'react-i18next'
 
 import { DialogRef, TooltipIcon } from '@/components/base'
 import { useVerge } from '@/hooks/use-verge'
-import { navItems } from '@/pages/_routers'
+import { navigationItems } from '@/pages/_navigation-meta'
 import { copyClashEnv } from '@/services/cmds'
 import { supportedLanguages } from '@/services/i18n'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import getSystem from '@/utils/get-system'
 
@@ -33,7 +34,7 @@ const languageOptions = supportedLanguages.map((code) => {
   const labels: { [key: string]: string } = {
     en: 'English',
     ru: 'Русский',
-    zh: '中文',
+    zh: '简体中文',
     fa: 'فارسی',
     tt: 'Татар',
     id: 'Bahasa Indonesia',
@@ -44,6 +45,7 @@ const languageOptions = supportedLanguages.map((code) => {
     es: 'Español',
     jp: '日本語',
     zhtw: '繁體中文',
+    pt: 'Português',
   }
   const label = labels[code] || code
   return { code, label }
@@ -70,12 +72,22 @@ const SettingVergeBasic = ({ onError }: Props) => {
   const backupRef = useRef<DialogRef>(null)
 
   const onChangeData = (patch: any) => {
-    mutateVerge({ ...verge, ...patch }, false)
+    mutateVerge({ ...verge, ...patch })
   }
 
   const onCopyClashEnv = useCallback(async () => {
-    await copyClashEnv()
-    showNotice.success('shared.feedback.notifications.common.copySuccess', 1000)
+    try {
+      await mutate(copyClashEnv, {
+        id: 'copy-clash-env',
+        onFulfilled: () =>
+          showNotice.success(
+            'shared.feedback.notifications.common.copySuccess',
+            1000,
+          ),
+      })
+    } catch {
+      // The shared mutation boundary reports the failure.
+    }
   }, [])
 
   return (
@@ -88,7 +100,10 @@ const SettingVergeBasic = ({ onError }: Props) => {
       <UpdateViewer ref={updateRef} />
       <BackupViewer ref={backupRef} />
 
-      <SettingItem label={t('settings.components.verge.basic.fields.language')}>
+      <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.language"
+        label={t('settings.components.verge.basic.fields.language')}
+      >
         <GuardState
           value={language ?? 'en'}
           onCatch={onError}
@@ -107,6 +122,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
       </SettingItem>
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.themeMode"
         label={t('settings.components.verge.basic.fields.themeMode')}
       >
         <GuardState
@@ -121,6 +137,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
 
       {OS !== 'linux' && (
         <SettingItem
+          data-setting-target="settings.components.verge.basic.fields.trayClickEvent"
           label={t('settings.components.verge.basic.fields.trayClickEvent')}
         >
           <GuardState
@@ -154,6 +171,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
       )}
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.copyEnvType"
         label={t('settings.components.verge.basic.fields.copyEnvType')}
         extra={
           <TooltipIcon icon={ContentCopyRounded} onClick={onCopyClashEnv} />
@@ -177,6 +195,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
       </SettingItem>
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.startPage"
         label={t('settings.components.verge.basic.fields.startPage')}
       >
         <GuardState
@@ -187,7 +206,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
           onGuard={(e) => patchVerge({ start_page: e })}
         >
           <Select size="small" sx={{ width: 140, '> div': { py: '7.5px' } }}>
-            {navItems.map((page: { label: string; path: string }) => {
+            {Object.values(navigationItems).map((page) => {
               return (
                 <MenuItem key={page.path} value={page.path}>
                   {t(page.label)}
@@ -199,6 +218,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
       </SettingItem>
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.startupScript"
         label={t('settings.components.verge.basic.fields.startupScript')}
       >
         <GuardState
@@ -216,6 +236,7 @@ const SettingVergeBasic = ({ onError }: Props) => {
             endAdornment={
               <>
                 <Button
+                  data-setting-target="settings.components.verge.basic.actions.browse"
                   onClick={async () => {
                     const selected = await open({
                       directory: false,
@@ -252,21 +273,25 @@ const SettingVergeBasic = ({ onError }: Props) => {
       </SettingItem>
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.themeSetting"
         onClick={() => themeRef.current?.open()}
         label={t('settings.components.verge.basic.fields.themeSetting')}
       />
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.layoutSetting"
         onClick={() => layoutRef.current?.open()}
         label={t('settings.components.verge.basic.fields.layoutSetting')}
       />
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.misc"
         onClick={() => miscRef.current?.open()}
         label={t('settings.components.verge.basic.fields.misc')}
       />
 
       <SettingItem
+        data-setting-target="settings.components.verge.basic.fields.hotkeySetting"
         onClick={() => hotkeyRef.current?.open()}
         label={t('settings.components.verge.basic.fields.hotkeySetting')}
       />

@@ -16,6 +16,7 @@ use tauri::{
     plugin::{Builder, TauriPlugin},
 };
 
+#[derive(Clone)]
 pub struct SysInfo {
     system_name: String,
     system_version: String,
@@ -26,9 +27,9 @@ pub struct SysInfo {
 impl Default for SysInfo {
     #[inline]
     fn default() -> Self {
-        let system_name = System::name().unwrap_or_else(|| "Null".into());
-        let system_version = System::long_os_version().unwrap_or_else(|| "Null".into());
-        let system_kernel_version = System::kernel_version().unwrap_or_else(|| "Null".into());
+        let system_name = System::name().unwrap_or_else(|_| "Null".into());
+        let system_version = System::long_os_version().unwrap_or_else(|_| "Null".into());
+        let system_kernel_version = System::kernel_version().unwrap_or_else(|_| "Null".into());
         let system_arch = System::cpu_arch();
         Self {
             system_name,
@@ -39,6 +40,7 @@ impl Default for SysInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct AppInfo {
     app_version: String,
     app_core_mode: String,
@@ -62,7 +64,7 @@ impl Default for AppInfo {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Platform {
     pub sysinfo: SysInfo,
     pub appinfo: AppInfo,
@@ -116,8 +118,7 @@ fn is_binary_admin() -> bool {
     #[cfg(windows)]
     Token::with_current_process()
         .and_then(|token| token.privilege_level())
-        .map(|level| level != PrivilegeLevel::NotPrivileged)
-        .unwrap_or(false)
+        .is_ok_and(|level| level != PrivilegeLevel::NotPrivileged)
 }
 
 #[inline]
@@ -128,9 +129,14 @@ pub fn current_gid() -> u32 {
 
 #[inline]
 pub fn list_network_interfaces() -> Vec<String> {
-    let mut networks = Networks::new();
+    let Ok(mut networks) = Networks::new() else {
+        return Vec::new();
+    };
     networks.refresh(false);
-    networks.keys().map(|name| name.to_owned()).collect()
+    networks
+        .keys()
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect()
 }
 
 #[inline]
@@ -157,14 +163,7 @@ pub fn is_current_app_handle_admin<R: Runtime>(app: &tauri::AppHandle<R>) -> boo
 #[inline]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::<R>::new("clash_verge_sysinfo")
-        // TODO 现在 crate 还不是真正的 tauri 插件，必须由主 lib 自行注册
-        // TODO 从 clash-verge 中迁移获取系统信息的 commnand 并实现优雅 structure.field 访问
-        // .invoke_handler(tauri::generate_handler![
-        //     commands::get_system_info,
-        //     commands::get_app_uptime,
-        //     commands::app_is_admin,
-        //     commands::export_diagnostic_info,
-        // ])
+        // TODO: move command registration here once this crate becomes a complete Tauri plugin.
         .setup(move |app, _api| {
             let app_version = app.package_info().version.to_string();
             let is_admin = is_binary_admin();

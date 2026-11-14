@@ -20,6 +20,13 @@
       },
       "fields": {
         "url": "Тест URL-ы"
+      },
+      "errors": {
+        "nameRequired": "Исем кертегез",
+        "urlRequired": "Тест сылтамасын кертегез",
+        "invalidSvg": "Билгә дөрес SVG түгел",
+        "uidMissing": "Тест элементы билгесе юк",
+        "saveFailed": "Тест элементын саклап булмады"
       }
     }
   },
@@ -29,6 +36,7 @@
       "yes": "Yes",
       "no": "No",
       "failed": "Failed",
+      "risky": "Билгесез",
       "completed": "Completed",
       "disallowedIsp": "Disallowed ISP",
       "originalsOnly": "Originals Only",

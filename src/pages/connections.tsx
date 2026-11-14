@@ -2,6 +2,7 @@ import {
   DeleteForeverRounded,
   TableChartRounded,
   TableRowsRounded,
+  ViewColumnRounded,
 } from '@mui/icons-material'
 import {
   Box,
@@ -10,6 +11,7 @@ import {
   Fab,
   IconButton,
   MenuItem,
+  Tooltip,
   Zoom,
 } from '@mui/material'
 import { useLockFn } from 'ahooks'
@@ -28,10 +30,18 @@ import {
   ConnectionDetail,
   ConnectionDetailRef,
 } from '@/components/connection/connection-detail'
-import { ConnectionItem } from '@/components/connection/connection-item'
+import { ConnectionRowItem } from '@/components/connection/connection-row-item'
+import {
+  getConnectionStartTime,
+  useConnectionRowViews,
+} from '@/components/connection/connection-row-view'
 import { ConnectionTable } from '@/components/connection/connection-table'
 import { useConnectionData } from '@/hooks/use-connection-data'
 import { useConnectionSetting } from '@/hooks/use-connection-setting'
+import { usePageSearch } from '@/hooks/use-page-search'
+import { useTrafficData } from '@/hooks/use-traffic-data'
+import { useVisibility } from '@/hooks/use-visibility'
+import { mutate } from '@/services/mutate'
 import parseTraffic from '@/utils/parse-traffic'
 
 type OrderFunc = (list: IConnectionsItem[]) => IConnectionsItem[]
@@ -42,26 +52,28 @@ const ORDER_OPTIONS = [
     labelKey: 'connections.components.order.default',
     fn: (list: IConnectionsItem[]) =>
       list.sort(
-        (a, b) =>
-          new Date(b.start || '0').getTime()! -
-          new Date(a.start || '0').getTime()!,
+        (a, b) => getConnectionStartTime(b) - getConnectionStartTime(a),
       ),
   },
   {
     id: 'uploadSpeed',
     labelKey: 'connections.components.order.uploadSpeed',
     fn: (list: IConnectionsItem[]) =>
-      list.sort((a, b) => b.curUpload! - a.curUpload!),
+      list.sort((a, b) => (b.curUpload ?? 0) - (a.curUpload ?? 0)),
   },
   {
     id: 'downloadSpeed',
     labelKey: 'connections.components.order.downloadSpeed',
     fn: (list: IConnectionsItem[]) =>
-      list.sort((a, b) => b.curDownload! - a.curDownload!),
+      list.sort((a, b) => (b.curDownload ?? 0) - (a.curDownload ?? 0)),
   },
 ] as const
 
 type OrderKey = (typeof ORDER_OPTIONS)[number]['id']
+
+type NetworkFilter = 'all' | 'tcp' | 'udp'
+
+let savedNetworkFilter: NetworkFilter = 'all'
 
 const orderFunctionMap = ORDER_OPTIONS.reduce<Record<OrderKey, OrderFunc>>(
   (acc, option) => {
@@ -71,12 +83,16 @@ const orderFunctionMap = ORDER_OPTIONS.reduce<Record<OrderKey, OrderFunc>>(
   {} as Record<OrderKey, OrderFunc>,
 )
 
+const EMPTY_CONNECTIONS: IConnectionsItem[] = []
 const ConnectionsPage = () => {
   const { t } = useTranslation()
-  const [match, setMatch] = useState<(input: string) => boolean>(
-    () => () => true,
-  )
+  const pageVisible = useVisibility()
+  const { searchState, match, onSearch } = usePageSearch('connections')
+  const hasSearch = searchState.text.length > 0
   const [curOrderOpt, setCurOrderOpt] = useState<OrderKey>('default')
+  const [networkFilter, setNetworkFilter] =
+    useState<NetworkFilter>(savedNetworkFilter)
+  const hasFilter = networkFilter !== 'all'
   const [connectionsType, setConnectionsType] = useState<'active' | 'closed'>(
     'active',
   )
@@ -84,7 +100,10 @@ const ConnectionsPage = () => {
   const {
     response: { data: connections },
     clearClosedConnections,
-  } = useConnectionData()
+  } = useConnectionData({ enabled: pageVisible })
+  const {
+    response: { data: traffic },
+  } = useTrafficData({ enabled: pageVisible })
 
   const [setting, setSetting] = useConnectionSetting()
 
@@ -92,31 +111,71 @@ const ConnectionsPage = () => {
 
   const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false)
 
-  const [filterConn] = useMemo(() => {
+  const selectedConnections =
+    connectionsType === 'active'
+      ? (connections?.activeConnections ?? EMPTY_CONNECTIONS)
+      : (connections?.closedConnections ?? EMPTY_CONNECTIONS)
+
+  const filterConn = useMemo(() => {
     const orderFunc = orderFunctionMap[curOrderOpt]
-    const conns =
-      (connectionsType === 'active'
-        ? connections?.activeConnections
-        : connections?.closedConnections) ?? []
-    let matchConns = conns.filter((conn) => {
-      const { host, destinationIP, process } = conn.metadata
+
+    if (isTableLayout && !hasSearch && !hasFilter) return selectedConnections
+    if (!hasSearch && !hasFilter) return orderFunc([...selectedConnections])
+
+    const matchConns = selectedConnections.filter((conn) => {
+      const { host, destinationIP, process, network } = conn.metadata
+      if (networkFilter !== 'all' && network !== networkFilter) return false
       return (
-        match(host || '') || match(destinationIP || '') || match(process || '')
+        !hasSearch ||
+        match(host || '') ||
+        match(destinationIP || '') ||
+        match(process || '')
       )
     })
 
-    if (orderFunc) matchConns = orderFunc(matchConns ?? [])
+    return orderFunc ? orderFunc(matchConns) : matchConns
+  }, [
+    selectedConnections,
+    isTableLayout,
+    hasSearch,
+    hasFilter,
+    networkFilter,
+    match,
+    curOrderOpt,
+  ])
 
-    return [matchConns]
-  }, [connections, connectionsType, match, curOrderOpt])
-
-  const onCloseAll = useLockFn(closeAllConnections)
+  const displayRows = useConnectionRowViews(
+    isTableLayout ? EMPTY_CONNECTIONS : filterConn,
+  )
 
   const detailRef = useRef<ConnectionDetailRef>(null!)
 
-  const handleSearch = useCallback((match: (content: string) => boolean) => {
-    setMatch(() => match)
-  }, [])
+  const selectConnectionsType = useCallback(
+    (type: 'active' | 'closed') => {
+      if (type === connectionsType) return
+      detailRef.current?.close()
+      setIsColumnManagerOpen(false)
+      setConnectionsType(type)
+    },
+    [connectionsType],
+  )
+
+  const showDetailById = useCallback(
+    (id: string) => {
+      const connection = filterConn.find((item) => item.id === id)
+      if (connection) {
+        detailRef.current?.open(connection, connectionsType === 'closed')
+      }
+    },
+    [connectionsType, filterConn],
+  )
+
+  const onCloseAll = useLockFn(() =>
+    mutate(() => closeAllConnections(), {
+      id: 'close-all-connections',
+      errorNotice: false,
+    }),
+  )
 
   const hasTableData = filterConn.length > 0
 
@@ -140,11 +199,10 @@ const ConnectionsPage = () => {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Box sx={{ mx: 1 }}>
             {t('shared.labels.downloaded')}:{' '}
-            {parseTraffic(connections?.downloadTotal)}
+            {parseTraffic(traffic?.downTotal || 0)}
           </Box>
           <Box sx={{ mx: 1 }}>
-            {t('shared.labels.uploaded')}:{' '}
-            {parseTraffic(connections?.uploadTotal)}
+            {t('shared.labels.uploaded')}: {parseTraffic(traffic?.upTotal || 0)}
           </Box>
           <IconButton
             color="inherit"
@@ -190,7 +248,7 @@ const ConnectionsPage = () => {
           <Button
             size="small"
             variant={connectionsType === 'active' ? 'contained' : 'outlined'}
-            onClick={() => setConnectionsType('active')}
+            onClick={() => selectConnectionsType('active')}
           >
             {t('connections.components.actions.active')}{' '}
             {connections?.activeConnections.length}
@@ -198,7 +256,7 @@ const ConnectionsPage = () => {
           <Button
             size="small"
             variant={connectionsType === 'closed' ? 'contained' : 'outlined'}
-            onClick={() => setConnectionsType('closed')}
+            onClick={() => selectConnectionsType('closed')}
           >
             {t('connections.components.actions.closed')}{' '}
             {connections?.closedConnections.length}
@@ -216,6 +274,24 @@ const ConnectionsPage = () => {
             ))}
           </BaseStyledSelect>
         )}
+        <BaseStyledSelect
+          style={{ width: 80 }}
+          value={networkFilter}
+          onChange={(e) => {
+            savedNetworkFilter = e.target.value as NetworkFilter
+            setNetworkFilter(savedNetworkFilter)
+          }}
+        >
+          <MenuItem value="all">
+            <span style={{ fontSize: 14 }}>All</span>
+          </MenuItem>
+          <MenuItem value="tcp">
+            <span style={{ fontSize: 14 }}>TCP</span>
+          </MenuItem>
+          <MenuItem value="udp">
+            <span style={{ fontSize: 14 }}>UDP</span>
+          </MenuItem>
+        </BaseStyledSelect>
         <Box
           sx={{
             flex: 1,
@@ -226,8 +302,24 @@ const ConnectionsPage = () => {
             },
           }}
         >
-          <BaseSearchBox onSearch={handleSearch} />
+          <BaseSearchBox
+            defaultValue={searchState.text}
+            {...searchState}
+            onSearch={onSearch}
+          />
         </Box>
+        {isTableLayout && hasTableData && (
+          <Tooltip title={t('connections.components.columnManager.title')}>
+            <IconButton
+              size="small"
+              aria-label={t('connections.components.columnManager.title')}
+              onClick={() => setIsColumnManagerOpen(true)}
+              sx={{ flex: '0 0 auto' }}
+            >
+              <ViewColumnRounded fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
 
       {!hasTableData ? (
@@ -235,27 +327,20 @@ const ConnectionsPage = () => {
       ) : isTableLayout ? (
         <ConnectionTable
           connections={filterConn}
-          onShowDetail={(detail) =>
-            detailRef.current?.open(detail, connectionsType === 'closed')
-          }
-          columnManagerOpen={isTableLayout && isColumnManagerOpen}
-          onOpenColumnManager={() => setIsColumnManagerOpen(true)}
+          onShowDetail={showDetailById}
+          columnManagerOpen={isColumnManagerOpen}
           onCloseColumnManager={() => setIsColumnManagerOpen(false)}
         />
       ) : (
         <VirtualList
-          count={filterConn.length}
+          key={connectionsType}
+          count={displayRows.length}
           estimateSize={56}
           renderItem={(i) => (
-            <ConnectionItem
-              value={filterConn[i]}
+            <ConnectionRowItem
+              row={displayRows[i]}
               closed={connectionsType === 'closed'}
-              onShowDetail={() =>
-                detailRef.current?.open(
-                  filterConn[i],
-                  connectionsType === 'closed',
-                )
-              }
+              onShowDetail={showDetailById}
             />
           )}
           style={{

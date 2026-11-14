@@ -35,6 +35,7 @@ import {
   restoreLocalBackup,
   restoreWebDavBackup,
 } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import {
   buildWebdavSignature,
@@ -49,6 +50,11 @@ const DATE_FORMAT = 'YYYY-MM-DD_HH-mm-ss'
 const FILENAME_PATTERN = /\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/
 
 type BackupSource = 'local' | 'webdav'
+type PendingConfirmation = {
+  action: 'delete' | 'restore'
+  filename: string
+  source: BackupSource
+} | null
 
 interface BackupHistoryViewerProps {
   open: boolean
@@ -67,11 +73,6 @@ interface BackupRow {
   sort_value: number
 }
 
-const confirmAsync = async (message: string) => {
-  const fn = window.confirm as (msg?: string) => boolean
-  return fn(message)
-}
-
 export const BackupHistoryViewer = ({
   open,
   source,
@@ -86,6 +87,9 @@ export const BackupHistoryViewer = ({
   const [loading, setLoading] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
+  const [isConfirming, setIsConfirming] = useState(false)
+  const [pendingConfirmation, setPendingConfirmation] =
+    useState<PendingConfirmation>(null)
   const isLocal = source === 'local'
   const isWebDavConfigured = Boolean(
     verge?.webdav_url && verge?.webdav_username && verge?.webdav_password,
@@ -94,7 +98,7 @@ export const BackupHistoryViewer = ({
   const webdavStatus = getWebdavStatus(webdavSignature)
   const shouldSkipWebDav = !isLocal && !isWebDavConfigured
   const pageSize = 8
-  const isBusy = loading || isRestoring || isRestarting
+  const isBusy = loading || isRestoring || isRestarting || isConfirming
 
   const buildRow = useCallback(
     (item: ILocalBackupFile | IWebDavFile): BackupRow | null => {
@@ -142,7 +146,12 @@ export const BackupHistoryViewer = ({
         setRows([])
         return
       }
-      if (!isLocal && webdavStatus === 'failed' && !options?.force) {
+      // Read the status here: as a dependency, the write below re-runs the fetch.
+      if (
+        !isLocal &&
+        getWebdavStatus(webdavSignature) === 'failed' &&
+        !options?.force
+      ) {
         setRows([])
         return
       }
@@ -176,7 +185,7 @@ export const BackupHistoryViewer = ({
         setLoading(false)
       }
     },
-    [buildRow, isLocal, open, shouldSkipWebDav, webdavSignature, webdavStatus],
+    [buildRow, isLocal, open, shouldSkipWebDav, webdavSignature],
   )
 
   useEffect(() => {
@@ -204,45 +213,69 @@ export const BackupHistoryViewer = ({
     })
   }, [isLocal, rows, shouldSkipWebDav, t, total, webdavStatus])
 
-  const handleDelete = useLockFn(async (filename: string) => {
+  const handleDelete = (filename: string) => {
     if (isRestarting) return
-    if (
-      !(await confirmAsync(t('settings.modals.backup.messages.confirmDelete')))
-    )
-      return
-    if (isLocal) {
-      await deleteLocalBackup(filename)
-    } else {
-      await deleteWebdavBackup(filename)
-    }
-    await fetchRows()
-  })
+    setPendingConfirmation({ action: 'delete', filename, source })
+  }
 
-  const handleRestore = useLockFn(async (filename: string) => {
+  const handleRestore = (filename: string) => {
     if (isRestoring || isRestarting) return
-    if (
-      !(await confirmAsync(t('settings.modals.backup.messages.confirmRestore')))
-    )
-      return
-    setIsRestoring(true)
+    setPendingConfirmation({ action: 'restore', filename, source })
+  }
+
+  const handleConfirmAction = useLockFn(async () => {
+    if (!pendingConfirmation) return
+    const { action, filename, source: actionSource } = pendingConfirmation
+    const actionIsLocal = actionSource === 'local'
+    setIsConfirming(true)
+    if (action === 'restore') {
+      setIsRestoring(true)
+    }
     try {
-      if (isLocal) {
-        await restoreLocalBackup(filename)
+      if (action === 'delete') {
+        if (actionIsLocal) {
+          await mutate(() => deleteLocalBackup(filename), {
+            id: 'delete-local-backup',
+            errorNotice: false,
+          })
+        } else {
+          await mutate(() => deleteWebdavBackup(filename), {
+            id: 'delete-webdav-backup',
+            errorNotice: false,
+          })
+        }
+        setPendingConfirmation(null)
+        await fetchRows()
       } else {
-        await restoreWebDavBackup(filename)
+        if (actionIsLocal) {
+          await mutate(() => restoreLocalBackup(filename), {
+            id: 'restore-local-backup',
+            errorNotice: false,
+          })
+        } else {
+          await mutate(() => restoreWebDavBackup(filename), {
+            id: 'restore-webdav-backup',
+            errorNotice: false,
+          })
+        }
+        setPendingConfirmation(null)
+        showNotice.success('settings.modals.backup.messages.restoreSuccess')
+        setIsRestarting(true)
+        window.setTimeout(() => {
+          void mutate(() => restartApp(), {
+            id: 'restart-app',
+            errorNotice: false,
+          }).catch((err: unknown) => {
+            setIsRestarting(false)
+            showNotice.error(err)
+          })
+        }, 1000)
       }
-      showNotice.success('settings.modals.backup.messages.restoreSuccess')
-      setIsRestarting(true)
-      window.setTimeout(() => {
-        void restartApp().catch((err: unknown) => {
-          setIsRestarting(false)
-          showNotice.error(err)
-        })
-      }, 1000)
     } catch (error) {
       console.error(error)
       showNotice.error(error)
     } finally {
+      setIsConfirming(false)
       setIsRestoring(false)
     }
   })
@@ -253,8 +286,11 @@ export const BackupHistoryViewer = ({
     const savePath = await save({ defaultPath: filename })
     if (!savePath || Array.isArray(savePath)) return
     try {
-      await exportLocalBackup(filename, savePath)
-      showNotice.success('settings.modals.backup.messages.localBackupExported')
+      await mutate(() => exportLocalBackup(filename, savePath), {
+        id: 'export-local-backup',
+        errorNotice: false,
+        successNotice: 'settings.modals.backup.messages.localBackupExported',
+      })
     } catch (ignoreError: unknown) {
       showNotice.error(
         'settings.modals.backup.messages.localBackupExportFailed',
@@ -267,6 +303,20 @@ export const BackupHistoryViewer = ({
     void fetchRows({ force: true })
   }
 
+  const closeConfirmDialog = () => {
+    if (isConfirming) return
+    setPendingConfirmation(null)
+  }
+
+  const confirmTitle =
+    pendingConfirmation?.action === 'delete'
+      ? t('settings.modals.backup.actions.deleteBackup')
+      : t('settings.modals.backup.actions.restoreBackup')
+  const confirmMessage =
+    pendingConfirmation?.action === 'delete'
+      ? t('settings.modals.backup.messages.confirmDelete')
+      : t('settings.modals.backup.messages.confirmRestore')
+
   return (
     <BaseDialog
       open={open}
@@ -277,7 +327,13 @@ export const BackupHistoryViewer = ({
       onCancel={onClose}
       onClose={onClose}
     >
-      <Box sx={{ position: 'relative', minHeight: 320 }}>
+      <Box
+        data-settings-dialog="backup-history"
+        data-search-ready={!loading}
+        data-setting-target="backup-history"
+        tabIndex={-1}
+        sx={{ position: 'relative', minHeight: 320 }}
+      >
         <BaseLoadingOverlay isLoading={isBusy} />
         <Stack spacing={2}>
           <Stack
@@ -362,6 +418,7 @@ export const BackupHistoryViewer = ({
                             <IconButton
                               size="small"
                               disabled={isBusy}
+                              data-setting-target="backup-history-export"
                               onClick={() => handleExport(row.filename)}
                             >
                               <DownloadRounded fontSize="small" />
@@ -370,6 +427,7 @@ export const BackupHistoryViewer = ({
                           <IconButton
                             size="small"
                             disabled={isBusy}
+                            data-setting-target="backup-history-delete"
                             onClick={() => handleDelete(row.filename)}
                           >
                             <DeleteOutlined fontSize="small" />
@@ -377,6 +435,7 @@ export const BackupHistoryViewer = ({
                           <IconButton
                             size="small"
                             disabled={isBusy}
+                            data-setting-target="backup-history-restore"
                             onClick={() => handleRestore(row.filename)}
                           >
                             <RestoreRounded fontSize="small" />
@@ -423,6 +482,30 @@ export const BackupHistoryViewer = ({
           )}
         </Stack>
       </Box>
+      <BaseDialog
+        open={pendingConfirmation !== null}
+        title={confirmTitle}
+        okBtn={t('shared.actions.confirm')}
+        cancelBtn={t('shared.actions.cancel')}
+        contentSx={{ width: { xs: 320, sm: 420 } }}
+        loading={isConfirming}
+        onCancel={closeConfirmDialog}
+        onClose={closeConfirmDialog}
+        onOk={handleConfirmAction}
+      >
+        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+          {confirmMessage}
+        </Typography>
+        {pendingConfirmation?.filename && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: 'block', mt: 1, wordBreak: 'break-all' }}
+          >
+            {pendingConfirmation.filename}
+          </Typography>
+        )}
+      </BaseDialog>
     </BaseDialog>
   )
 }

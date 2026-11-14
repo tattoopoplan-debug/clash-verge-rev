@@ -1,40 +1,66 @@
 import { Close, CropSquare, FilterNone, Minimize } from '@mui/icons-material'
 import { Box, IconButton } from '@mui/material'
-import { forwardRef, useImperativeHandle } from 'react'
+import { type PointerEvent, useCallback } from 'react'
 
 import { useWindowControls } from '@/hooks/use-window'
 import getSystem from '@/utils/get-system'
 
-export const WindowControls = forwardRef(function WindowControls(props, ref) {
-  const OS = getSystem()
-  const {
-    currentWindow,
-    maximized,
-    minimize,
-    close,
-    toggleFullscreen,
-    toggleMaximize,
-  } = useWindowControls()
+const RESIZE_HANDLES = [
+  { direction: 'North', position: 'north' },
+  { direction: 'NorthEast', position: 'north-east' },
+  { direction: 'East', position: 'east' },
+  { direction: 'SouthEast', position: 'south-east' },
+  { direction: 'South', position: 'south' },
+  { direction: 'SouthWest', position: 'south-west' },
+  { direction: 'West', position: 'west' },
+  { direction: 'NorthWest', position: 'north-west' },
+] as const
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      currentWindow,
-      maximized,
-      minimize,
-      close,
-      toggleFullscreen,
-      toggleMaximize,
-    }),
-    [
-      currentWindow,
-      maximized,
-      minimize,
-      close,
-      toggleFullscreen,
-      toggleMaximize,
-    ],
+export const WindowResizeHandles = () => {
+  const { currentWindow, maximized } = useWindowControls()
+
+  const startResizeDragging = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return
+
+      event.preventDefault()
+      const direction = event.currentTarget.dataset.resizeDirection
+      const handle = RESIZE_HANDLES.find((item) => item.direction === direction)
+
+      if (handle) {
+        void currentWindow
+          .startResizeDragging(handle.direction)
+          .catch((error) =>
+            console.warn('[WindowResizeHandles] 调整窗口大小失败:', error),
+          )
+      }
+    },
+    [currentWindow],
   )
+
+  if (getSystem() !== 'linux' || maximized) return null
+
+  return (
+    <div
+      className="window-resize-handles"
+      data-tauri-drag-region="false"
+      aria-hidden="true"
+    >
+      {RESIZE_HANDLES.map(({ direction, position }) => (
+        <div
+          key={direction}
+          className={`window-resize-handle window-resize-handle--${position}`}
+          data-resize-direction={direction}
+          onPointerDown={startResizeDragging}
+        />
+      ))}
+    </div>
+  )
+}
+
+export const WindowControls = () => {
+  const OS = getSystem()
+  const { maximized, minimize, close, toggleMaximize } = useWindowControls()
 
   // 通过前端对 tauri 窗口进行翻转全屏时会短暂地与系统图标重叠渲染。
   // 这可能是上游缺陷，保险起见跨平台以窗口的最大化翻转为准。
@@ -128,4 +154,4 @@ export const WindowControls = forwardRef(function WindowControls(props, ref) {
       )}
     </Box>
   )
-})
+}

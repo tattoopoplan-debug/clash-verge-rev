@@ -20,6 +20,13 @@
       },
       "fields": {
         "url": "テストURL"
+      },
+      "errors": {
+        "nameRequired": "名前を入力してください",
+        "urlRequired": "テストURLを入力してください",
+        "invalidSvg": "アイコンが有効なSVGではありません",
+        "uidMissing": "テスト項目の識別子がありません",
+        "saveFailed": "テスト項目の保存に失敗しました"
       }
     }
   },
@@ -29,6 +36,7 @@
       "yes": "サポートする",
       "no": "サポートしない",
       "failed": "テストに失敗しました。",
+      "risky": "要確認",
       "completed": "検査完了",
       "disallowedIsp": "許可されていないインターネットサービスプロバイダー",
       "originalsOnly": "オリジナルのみ",

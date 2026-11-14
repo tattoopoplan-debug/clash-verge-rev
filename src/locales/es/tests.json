@@ -20,6 +20,13 @@
       },
       "fields": {
         "url": "URL de prueba"
+      },
+      "errors": {
+        "nameRequired": "Introduce un nombre",
+        "urlRequired": "Introduce una URL de prueba",
+        "invalidSvg": "El icono no es un SVG válido",
+        "uidMissing": "Falta el identificador del elemento de prueba",
+        "saveFailed": "No se pudo guardar el elemento de prueba"
       }
     }
   },
@@ -29,6 +36,7 @@
       "yes": "Soportado",
       "no": "No soportado",
       "failed": "Prueba fallida",
+      "risky": "Dudoso",
       "completed": "Detección completada",
       "disallowedIsp": "Proveedor de servicios de Internet no permitido",
       "originalsOnly": "Solo originales",

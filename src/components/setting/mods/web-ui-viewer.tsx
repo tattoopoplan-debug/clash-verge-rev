@@ -1,14 +1,16 @@
 import { Box, Button, Typography } from '@mui/material'
 import { useLockFn } from 'ahooks'
 import type { Ref } from 'react'
-import { useImperativeHandle, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BaseDialog, BaseEmpty, DialogRef } from '@/components/base'
 import { useClashInfo } from '@/hooks/use-clash'
 import { useVerge } from '@/hooks/use-verge'
-import { openWebUrl } from '@/services/cmds'
 import { showNotice } from '@/services/notice-service'
+import { openExternalUrl } from '@/utils/open-external-url'
+
+import { useSettingDialog } from '../settings-search-context'
 
 import { WebUIItem } from './web-ui-item'
 
@@ -27,7 +29,7 @@ export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
 
-  useImperativeHandle(ref, () => ({
+  useSettingDialog(ref, 'web-ui-viewer', open, () => ({
     open: () => setOpen(true),
     close: () => setOpen(false),
   }))
@@ -50,21 +52,21 @@ export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
 
   const handleAdd = useLockFn(async (value: string) => {
     const newList = [...webUIList, value]
-    mutateVerge((old) => (old ? { ...old, web_ui_list: newList } : old), false)
+    mutateVerge((old) => (old ? { ...old, web_ui_list: newList } : old))
     await patchVerge({ web_ui_list: newList })
   })
 
   const handleChange = useLockFn(async (index: number, value?: string) => {
     const newList = [...webUIList]
     newList[index] = value ?? ''
-    mutateVerge((old) => (old ? { ...old, web_ui_list: newList } : old), false)
+    mutateVerge((old) => (old ? { ...old, web_ui_list: newList } : old))
     await patchVerge({ web_ui_list: newList })
   })
 
   const handleDelete = useLockFn(async (index: number) => {
     const newList = [...webUIList]
     newList.splice(index, 1)
-    mutateVerge((old) => (old ? { ...old, web_ui_list: newList } : old), false)
+    mutateVerge((old) => (old ? { ...old, web_ui_list: newList } : old))
     await patchVerge({ web_ui_list: newList })
   })
 
@@ -74,9 +76,17 @@ export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
       let url = value.trim().replaceAll('%host', '127.0.0.1')
 
       if (url.includes('%port') || url.includes('%secret')) {
-        if (!clashInfo) throw new Error('failed to get clash info')
+        if (!clashInfo) {
+          throw new Error(
+            t('settings.modals.webUI.errors.clashInfoUnavailable'),
+          )
+        }
         if (!clashInfo.server?.includes(':')) {
-          throw new Error(`failed to parse the server "${clashInfo.server}"`)
+          throw new Error(
+            t('settings.modals.webUI.errors.invalidServer', {
+              server: clashInfo.server,
+            }),
+          )
         }
 
         const port = clashInfo.server
@@ -90,9 +100,9 @@ export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
         )
       }
 
-      await openWebUrl(url)
+      await openExternalUrl(url)
     } catch (e: any) {
-      showNotice.error(e)
+      showNotice.error('settings.modals.webUI.errors.openFailed', e)
     }
   })
 
@@ -106,6 +116,7 @@ export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
             variant="contained"
             size="small"
             disabled={editing}
+            data-setting-target="web-ui-new"
             onClick={() => setEditing(true)}
           >
             {t('shared.actions.new')}
@@ -124,36 +135,42 @@ export function WebUIViewer({ ref }: { ref?: Ref<DialogRef> }) {
       onClose={() => setOpen(false)}
       onCancel={() => setOpen(false)}
     >
-      {!editing && webUIList.length === 0 && (
-        <BaseEmpty
-          extra={
-            <Typography sx={{ mt: 2, fontSize: '12px' }}>
-              {t('settings.modals.webUI.messages.placeholderInstruction')}
-            </Typography>
-          }
-        />
-      )}
+      <div
+        data-settings-dialog="web-ui-viewer"
+        data-setting-target="web-ui-viewer"
+        tabIndex={-1}
+      >
+        {!editing && webUIList.length === 0 && (
+          <BaseEmpty
+            extra={
+              <Typography sx={{ mt: 2, fontSize: '12px' }}>
+                {t('settings.modals.webUI.messages.placeholderInstruction')}
+              </Typography>
+            }
+          />
+        )}
 
-      {webUIEntries.map(({ item, index, key }) => (
-        <WebUIItem
-          key={key}
-          value={item}
-          onChange={(v) => handleChange(index, v)}
-          onDelete={() => handleDelete(index)}
-          onOpenUrl={handleOpenUrl}
-        />
-      ))}
-      {editing && (
-        <WebUIItem
-          value=""
-          onlyEdit
-          onChange={(v) => {
-            setEditing(false)
-            handleAdd(v || '')
-          }}
-          onCancel={() => setEditing(false)}
-        />
-      )}
+        {webUIEntries.map(({ item, index, key }) => (
+          <WebUIItem
+            key={key}
+            value={item}
+            onChange={(v) => handleChange(index, v)}
+            onDelete={() => handleDelete(index)}
+            onOpenUrl={handleOpenUrl}
+          />
+        ))}
+        {editing && (
+          <WebUIItem
+            value=""
+            onlyEdit
+            onChange={(v) => {
+              setEditing(false)
+              handleAdd(v || '')
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        )}
+      </div>
     </BaseDialog>
   )
 }

@@ -5,13 +5,47 @@ interface ICompressedDataPoint {
   samples: number
 }
 
-export const formatTrafficName = (timestamp: number) =>
-  new Date(timestamp).toLocaleTimeString('en-US', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
+const pad2 = (value: number) => value.toString().padStart(2, '0')
+
+export const formatTrafficHourMinute = (timestamp: number) => {
+  const date = new Date(timestamp)
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+}
+
+export const formatTrafficMinuteSecond = (timestamp: number) => {
+  const date = new Date(timestamp)
+  return `${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
+}
+
+export const formatTrafficName = (timestamp: number) => {
+  const date = new Date(timestamp)
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(
+    date.getSeconds(),
+  )}`
+}
+
+export const isSameTrafficData = (
+  current: ITrafficDataPoint[],
+  next: ITrafficDataPoint[],
+) => {
+  if (current === next) return true
+  if (current.length !== next.length) return false
+
+  for (let i = 0; i < current.length; i++) {
+    const currentPoint = current[i]
+    const nextPoint = next[i]
+
+    if (
+      currentPoint.timestamp !== nextPoint.timestamp ||
+      currentPoint.up !== nextPoint.up ||
+      currentPoint.down !== nextPoint.down
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
 
 export class TrafficDataSampler {
   private rawBuffer: ITrafficDataPoint[] = []
@@ -114,7 +148,6 @@ export class TrafficDataSampler {
         up: p.up,
         down: p.down,
         timestamp: p.timestamp,
-        name: formatTrafficName(p.timestamp),
       }))
 
     return [...compressedData, ...rawData].sort(

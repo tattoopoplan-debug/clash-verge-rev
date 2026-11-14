@@ -2,15 +2,104 @@ import eslintJS from '@eslint/js'
 import eslintReact from '@eslint-react/eslint-plugin'
 import { defineConfig } from 'eslint/config'
 import { createTypeScriptImportResolver } from 'eslint-import-resolver-typescript'
+import pluginESx from 'eslint-plugin-es-x'
 import pluginImportX from 'eslint-plugin-import-x'
 import pluginReactCompiler from 'eslint-plugin-react-compiler'
 import pluginReactHooks from 'eslint-plugin-react-hooks'
 import pluginReactRefresh from 'eslint-plugin-react-refresh'
+import PluginSukka from 'eslint-plugin-sukka'
 import pluginUnusedImports from 'eslint-plugin-unused-imports'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
+const ipcBoundaryRules = ({
+  allowCommands = false,
+  allowInvoke = false,
+  allowEvents = false,
+} = {}) => {
+  const paths = [
+    ...(!allowInvoke
+      ? [
+          {
+            name: '@tauri-apps/api/core',
+            importNames: ['invoke'],
+            allowTypeImports: true,
+            message: 'Invoke backend commands through services/cmds.',
+          },
+        ]
+      : []),
+    ...(!allowEvents
+      ? [
+          {
+            name: '@tauri-apps/api/event',
+            importNames: ['listen', 'emit', 'emitTo', 'once'],
+            allowTypeImports: true,
+            message:
+              'The event bus owns Tauri event subscriptions and emissions.',
+          },
+        ]
+      : []),
+  ]
+  const patterns = allowCommands
+    ? []
+    : [
+        {
+          regex: '(^|/)bindings(\\.ts)?$',
+          importNames: ['commands'],
+          allowTypeImports: true,
+          message:
+            'Only services/cmds may import generated command implementations.',
+        },
+      ]
+  const modules = [
+    ...(!allowInvoke ? ['@tauri-apps/api/core'] : []),
+    ...(!allowEvents ? ['@tauri-apps/api/event'] : []),
+  ]
+  const syntax = modules.flatMap((name) => [
+    {
+      selector: `ImportExpression[source.value='${name}']`,
+      message:
+        'Use the owned IPC service boundary instead of dynamically importing Tauri APIs.',
+    },
+    {
+      selector: `CallExpression[callee.name='require'][arguments.0.value='${name}']`,
+      message:
+        'Use the owned IPC service boundary instead of requiring Tauri APIs.',
+    },
+    {
+      selector: `TSImportEqualsDeclaration[moduleReference.expression.value='${name}']`,
+      message: 'Use the owned IPC service boundary for Tauri APIs.',
+    },
+  ])
+  if (!allowCommands) {
+    syntax.push(
+      {
+        selector: 'ImportExpression[source.value=/bindings(\\.ts)?$/]',
+        message:
+          'Only services/cmds may load generated command implementations.',
+      },
+      {
+        selector:
+          "CallExpression[callee.name='require'][arguments.0.value=/bindings(\\.ts)?$/]",
+        message:
+          'Only services/cmds may load generated command implementations.',
+      },
+      {
+        selector:
+          'TSImportEqualsDeclaration[moduleReference.expression.value=/bindings(\\.ts)?$/]',
+        message:
+          'Only services/cmds may load generated command implementations.',
+      },
+    )
+  }
+  return {
+    'no-restricted-imports': ['error', { paths, patterns }],
+    'no-restricted-syntax': ['error', ...syntax],
+  }
+}
+
 export default defineConfig([
+  pluginESx.configs['flat/restrict-to-es2022'],
   {
     files: ['**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
 
@@ -19,9 +108,11 @@ export default defineConfig([
       // @ts-expect-error -- https://github.com/typescript-eslint/typescript-eslint/issues/11543
       'react-hooks': pluginReactHooks,
       'react-compiler': pluginReactCompiler,
+      'es-x': pluginESx,
       'import-x': pluginImportX,
       'react-refresh': pluginReactRefresh,
       'unused-imports': pluginUnusedImports,
+      sukka: PluginSukka,
     },
 
     extends: [
@@ -37,7 +128,11 @@ export default defineConfig([
           allowDefaultProject: [
             'eslint.config.ts',
             `vite.config.mts`,
+            'scripts/*.mjs',
+            'scripts-workflow/*.mjs',
+            'tests/*.ts',
             'src/polyfills/*.js',
+            'tests/*.mjs',
           ],
         },
       },
@@ -87,7 +182,7 @@ export default defineConfig([
       '@eslint-react/no-unused-class-component-members': 'error',
       '@eslint-react/no-unused-state': 'error',
       '@eslint-react/jsx-no-useless-fragment': 'warn',
-      '@eslint-react/prefer-destructuring-assignment': 'warn',
+      'sukka/react-prefer-destructuring-assignment': 'warn',
 
       // TypeScript
       '@typescript-eslint/no-explicit-any': 'off',
@@ -142,6 +237,52 @@ export default defineConfig([
         ...globals.browser,
         ...globals.node,
       },
+    },
+  },
+  {
+    files: ['scripts-workflow/*.mjs'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: { 'es-x/no-object-groupby': 'off' },
+  },
+  {
+    files: ['scripts/perf/*.{mjs,mts}'],
+    languageOptions: {
+      globals: globals.node,
+      parserOptions: {
+        projectService: false,
+        project: './scripts/perf/tsconfig.node.json',
+      },
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx,js,jsx,mts,mjs}'],
+    rules: ipcBoundaryRules(),
+  },
+  {
+    files: ['src/services/cmds.ts'],
+    rules: ipcBoundaryRules({ allowCommands: true }),
+  },
+  {
+    files: ['src/services/bindings.ts'],
+    rules: ipcBoundaryRules({ allowCommands: true, allowInvoke: true }),
+  },
+  {
+    files: ['src/services/bus/**/*.{ts,tsx}'],
+    rules: ipcBoundaryRules({ allowEvents: true }),
+  },
+  {
+    files: [
+      'src/components/proxy/proxy-chain.tsx',
+      'src/components/proxy/proxy-groups-chain.tsx',
+      'src/pages/proxies.tsx',
+    ],
+    rules: {
+      '@typescript-eslint/no-floating-promises': [
+        'error',
+        { ignoreVoid: false },
+      ],
     },
   },
 ])

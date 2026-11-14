@@ -3,10 +3,14 @@ import {
   ArrowUpwardRounded,
   CloudDownloadRounded,
   CloudUploadRounded,
+  ErrorOutlineRounded,
   LinkRounded,
   MemoryRounded,
 } from '@mui/icons-material'
 import {
+  Alert,
+  Box,
+  Button,
   Grid,
   PaletteColor,
   Paper,
@@ -15,10 +19,10 @@ import {
   useTheme,
 } from '@mui/material'
 import { ReactNode, memo, useMemo, useRef } from 'react'
+import { ErrorBoundary, FallbackProps } from 'react-error-boundary'
 import { useTranslation } from 'react-i18next'
 
-import { TrafficErrorBoundary } from '@/components/shared/traffic-error-boundary'
-import { useConnectionData } from '@/hooks/use-connection-data'
+import { useConnectionSummaryData } from '@/hooks/use-connection-data'
 import { useMemoryData } from '@/hooks/use-memory-data'
 import { useTrafficData } from '@/hooks/use-traffic-data'
 import { useVerge } from '@/hooks/use-verge'
@@ -37,17 +41,6 @@ interface StatCardProps {
   unit: string
   color: 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success'
   onClick?: () => void
-}
-
-// 全局变量类型定义
-declare global {
-  interface Window {
-    animationFrameId?: number
-    lastTrafficData?: {
-      up: number
-      down: number
-    }
-  }
 }
 
 // 统计卡片组件 - 使用memo优化
@@ -138,6 +131,50 @@ const CompactStatCard = memo(
 // 添加显示名称
 CompactStatCard.displayName = 'CompactStatCard'
 
+const fallbackSx = {
+  p: 2,
+  minHeight: 200,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: '1px dashed',
+  borderColor: 'error.main',
+  borderRadius: 2,
+  bgcolor: 'error.light',
+}
+
+const reloadPage = () => window.location.reload()
+
+const TrafficFallback = ({ error, resetErrorBoundary }: FallbackProps) => {
+  const { t } = useTranslation()
+
+  return (
+    <Box sx={fallbackSx}>
+      <ErrorOutlineRounded color="error" sx={{ fontSize: 48, mb: 2 }} />
+      <Typography variant="h6" gutterBottom>
+        {t('shared.feedback.errors.trafficStats')}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {t('shared.feedback.errors.trafficStatsDescription')}
+      </Typography>
+      <Alert severity="error" sx={{ mb: 2, maxWidth: 400 }}>
+        {error instanceof Error
+          ? error.message
+          : t('shared.feedback.errors.unknown')}
+      </Alert>
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Button variant="contained" size="small" onClick={resetErrorBoundary}>
+          {t('shared.actions.retry')}
+        </Button>
+        <Button variant="outlined" size="small" onClick={reloadPage}>
+          {t('shared.actions.refreshPage')}
+        </Button>
+      </Box>
+    </Box>
+  )
+}
+
 export const EnhancedTrafficStats = () => {
   const { t } = useTranslation()
   const theme = useTheme()
@@ -147,18 +184,19 @@ export const EnhancedTrafficStats = () => {
 
   // 是否显示流量图表
   const trafficGraph = verge?.traffic_graph ?? true
+  const displayMemory = verge?.enable_memory_usage ?? true
 
   const {
     response: { data: traffic },
-  } = useTrafficData({ enabled: trafficGraph && pageVisible })
+  } = useTrafficData({ enabled: pageVisible })
 
   const {
     response: { data: memory },
-  } = useMemoryData()
+  } = useMemoryData({ enabled: displayMemory && pageVisible })
 
   const {
-    response: { data: connections },
-  } = useConnectionData()
+    response: { data: connectionSummary },
+  } = useConnectionSummaryData({ enabled: pageVisible })
 
   // Canvas组件现在直接从全局Hook获取数据，无需手动添加数据点
 
@@ -167,11 +205,9 @@ export const EnhancedTrafficStats = () => {
     const [up, upUnit] = parseTraffic(traffic?.up || 0)
     const [down, downUnit] = parseTraffic(traffic?.down || 0)
     const [inuse, inuseUnit] = parseTraffic(memory?.inuse || 0)
-    const [uploadTotal, uploadTotalUnit] = parseTraffic(
-      connections?.uploadTotal,
-    )
+    const [uploadTotal, uploadTotalUnit] = parseTraffic(traffic?.upTotal || 0)
     const [downloadTotal, downloadTotalUnit] = parseTraffic(
-      connections?.downloadTotal,
+      traffic?.downTotal || 0,
     )
 
     return {
@@ -185,9 +221,9 @@ export const EnhancedTrafficStats = () => {
       uploadTotalUnit,
       downloadTotal,
       downloadTotalUnit,
-      connectionsCount: connections?.activeConnections.length,
+      connectionsCount: connectionSummary?.activeConnectionCount,
     }
-  }, [traffic, memory, connections])
+  }, [traffic, memory, connectionSummary])
 
   // 渲染流量图表 - 使用useMemo缓存渲染结果
   const trafficGraphComponent = useMemo(() => {
@@ -213,8 +249,8 @@ export const EnhancedTrafficStats = () => {
   }, [trafficGraph, pageVisible, theme.palette.divider])
 
   // 使用useMemo计算统计卡片配置
-  const statCards = useMemo(
-    () => [
+  const statCards = useMemo(() => {
+    const cards: StatCardProps[] = [
       {
         icon: <ArrowUpwardRounded fontSize="small" />,
         title: t('home.components.traffic.metrics.uploadSpeed'),
@@ -250,23 +286,27 @@ export const EnhancedTrafficStats = () => {
         unit: parsedData.downloadTotalUnit,
         color: 'primary' as const,
       },
-      {
+    ]
+
+    if (displayMemory) {
+      cards.push({
         icon: <MemoryRounded fontSize="small" />,
         title: t('home.components.traffic.metrics.memoryUsage'),
         value: parsedData.inuse,
         unit: parsedData.inuseUnit,
         color: 'error' as const,
-        onClick: undefined,
-      },
-    ],
-    [t, parsedData],
-  )
+      })
+    }
+
+    return cards
+  }, [t, parsedData, displayMemory])
 
   return (
-    <TrafficErrorBoundary
-      onError={(error, errorInfo) => {
-        console.error('[EnhancedTrafficStats] 组件错误:', error, errorInfo)
-      }}
+    <ErrorBoundary
+      FallbackComponent={TrafficFallback}
+      onError={(error, errorInfo) =>
+        console.error('[EnhancedTrafficStats]', error, errorInfo)
+      }
     >
       <Grid container spacing={1} columns={{ xs: 8, sm: 8, md: 12 }}>
         {trafficGraph && (
@@ -278,10 +318,10 @@ export const EnhancedTrafficStats = () => {
         {/* 统计卡片区域 */}
         {statCards.map((card) => (
           <Grid key={card.title} size={4}>
-            <CompactStatCard {...(card as StatCardProps)} />
+            <CompactStatCard {...card} />
           </Grid>
         ))}
       </Grid>
-    </TrafficErrorBoundary>
+    </ErrorBoundary>
   )
 }
